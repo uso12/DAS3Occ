@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.log
+*.tmp
+
+/data/
+/work_dirs/
+
+*.pth
+*.pt
+*.ckpt
