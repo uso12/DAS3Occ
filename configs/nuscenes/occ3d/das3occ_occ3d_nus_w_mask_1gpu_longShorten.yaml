@@ -136,7 +136,7 @@ model:
       guidance_gain: 1.5
       guidance_threshold: 0.2
       guidance_blur_kernel: 3
-      use_temporal_memory: true
+      use_temporal_memory: false
       temporal_momentum: 0.9
       temporal_blend: 0.3
       max_memory_entries: 2048

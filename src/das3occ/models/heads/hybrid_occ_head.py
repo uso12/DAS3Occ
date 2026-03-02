@@ -67,6 +67,11 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
             img_feats = self.coordinate_transform(img_feats, lidar_aug_matrix, lidar2ego, occ_aug_matrix)
             img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=1e4, neginf=-1e4)
 
+        # Object head guidance is produced on BEV [X, Y], while occ features here are [Y, X].
+        # Align axes before resizing/projecting guidance.
+        if det_guidance_logits is not None and det_guidance_logits.dim() == 4:
+            det_guidance_logits = det_guidance_logits.permute(0, 1, 3, 2).contiguous()
+
         guidance = self.guidance_projector(det_guidance_logits, img_feats.shape[-2:])
         if guidance is not None:
             guidance = torch.nan_to_num(guidance, nan=0.0, posinf=1.0, neginf=0.0)
