@@ -29,6 +29,9 @@ def _normalize_cli_paths() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("config", nargs="?")
     parser.add_argument("--run-dir")
+    parser.add_argument("--work-dir")
+    parser.add_argument("--resume-from")
+    parser.add_argument("--load-from")
     parser.add_argument("--launcher")
     parser.add_argument("--local_rank", type=int, default=0)
     args, _ = parser.parse_known_args(sys.argv[1:])
@@ -43,6 +46,9 @@ def _normalize_cli_paths() -> None:
             break
 
     _normalize_option_path("--run-dir")
+    _normalize_option_path("--work-dir")
+    _normalize_option_path("--resume-from")
+    _normalize_option_path("--load-from")
 
 
 def main():
