@@ -48,6 +48,16 @@ class HybridBEVFusion(BEVFusion):
 
         return torch.cat(hm_list, dim=1).amax(dim=1, keepdim=True)
 
+    @staticmethod
+    def _resolve_occ_aug_matrix(kwargs, lidar_aug_matrix) -> Optional[torch.Tensor]:
+        occ_aug_matrix = kwargs.get("occ_aug_matrix", None)
+        if occ_aug_matrix is not None:
+            return occ_aug_matrix
+        if torch.is_tensor(lidar_aug_matrix):
+            eye = torch.eye(4, dtype=lidar_aug_matrix.dtype, device=lidar_aug_matrix.device)
+            return eye.unsqueeze(0).repeat(lidar_aug_matrix.shape[0], 1, 1)
+        return None
+
     @auto_fp16(apply_to=("img", "points"))
     def forward(
         self,
@@ -169,17 +179,18 @@ class HybridBEVFusion(BEVFusion):
 
             if "occ" in self.heads:
                 occ_head = self.heads["occ"]
+                occ_aug_matrix = self._resolve_occ_aug_matrix(kwargs, lidar_aug_matrix)
                 try:
                     occ_pred = occ_head(
                         x,
                         lidar_aug_matrix,
                         lidar2ego,
-                        kwargs["occ_aug_matrix"],
+                        occ_aug_matrix,
                         det_guidance_logits=det_guidance,
                         metas=metas,
                     )
                 except TypeError:
-                    occ_pred = occ_head(x, lidar_aug_matrix, lidar2ego, kwargs["occ_aug_matrix"])
+                    occ_pred = occ_head(x, lidar_aug_matrix, lidar2ego, occ_aug_matrix)
 
                 occ_losses = occ_head.loss(occ_pred, kwargs["voxel_semantics"], kwargs["mask_camera"])
                 for name, val in occ_losses.items():
@@ -215,17 +226,18 @@ class HybridBEVFusion(BEVFusion):
 
         if "occ" in self.heads:
             occ_head = self.heads["occ"]
+            occ_aug_matrix = self._resolve_occ_aug_matrix(kwargs, lidar_aug_matrix)
             try:
                 occ_pred = occ_head(
                     x,
                     lidar_aug_matrix,
                     lidar2ego,
-                    kwargs["occ_aug_matrix"],
+                    occ_aug_matrix,
                     det_guidance_logits=det_guidance,
                     metas=metas,
                 )
             except TypeError:
-                occ_pred = occ_head(x, lidar_aug_matrix, lidar2ego, kwargs["occ_aug_matrix"])
+                occ_pred = occ_head(x, lidar_aug_matrix, lidar2ego, occ_aug_matrix)
             occ_pred = occ_head.get_occ(occ_pred)
             for k in range(batch_size):
                 outputs[k].update({"occ_pred": occ_pred[k]})
