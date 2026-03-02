@@ -46,7 +46,8 @@ class HybridBEVFusion(BEVFusion):
         if not hm_list:
             return None
 
-        return torch.cat(hm_list, dim=1).amax(dim=1, keepdim=True)
+        # Occ head should consume detector prior without training detector head through occ loss.
+        return torch.cat(hm_list, dim=1).amax(dim=1, keepdim=True).detach()
 
     @staticmethod
     def _resolve_occ_aug_matrix(kwargs, lidar_aug_matrix) -> Optional[torch.Tensor]:
