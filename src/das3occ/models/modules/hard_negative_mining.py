@@ -16,7 +16,7 @@ def hard_negative_suppression_loss(
 ) -> torch.Tensor:
     """Penalize non-empty occupancy outside detector-supported regions."""
     if loss_weight <= 0 or det_guidance_xy is None:
-        return occ_pred.new_tensor(0.0)
+        return occ_pred.sum() * 0.0
 
     # Keep logits in a safe range for numerics before softmax/BCE.
     occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=10.0, neginf=-10.0)
@@ -32,15 +32,16 @@ def hard_negative_suppression_loss(
     det_mask = det_mask_xy.unsqueeze(-1).expand_as(nonempty_prob)
 
     valid_mask = mask_camera.to(torch.bool) & (voxel_semantics != ignore_index)
-    neg_mask = valid_mask & (~det_mask)
+    # Suppress only in true-background voxels to avoid contradicting CE supervision.
+    neg_mask = valid_mask & (~det_mask) & (voxel_semantics == empty_class_idx)
 
     if int(neg_mask.sum()) == 0:
-        return occ_pred.new_tensor(0.0)
+        return occ_pred.sum() * 0.0
 
     pred_neg = nonempty_prob[neg_mask]
     # Keep BCE input away from exact 0/1 to avoid extreme backward spikes.
     pred_neg = torch.nan_to_num(pred_neg, nan=0.0, posinf=1.0, neginf=0.0).clamp(1e-4, 1.0 - 1e-4)
     if pred_neg.numel() == 0:
-        return occ_pred.new_tensor(0.0)
+        return occ_pred.sum() * 0.0
     target = torch.zeros_like(pred_neg)
     return F.binary_cross_entropy(pred_neg, target) * loss_weight
