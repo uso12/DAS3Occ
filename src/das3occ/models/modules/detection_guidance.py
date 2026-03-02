@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 
 class DetectionGuidanceProjector(nn.Module):
-    """Projects detector logits into a smooth single-channel spatial prior."""
+    """Projects detector probabilities into a smooth single-channel spatial prior."""
 
     def __init__(self, blur_kernel: int = 3) -> None:
         super().__init__()
@@ -22,7 +22,8 @@ class DetectionGuidanceProjector(nn.Module):
         if guidance_logits is None:
             return None
 
-        x = torch.nan_to_num(guidance_logits, nan=0.0, posinf=20.0, neginf=-20.0)
+        # Guidance from HybridBEVFusion is already sigmoid probability.
+        x = torch.nan_to_num(guidance_logits, nan=0.0, posinf=1.0, neginf=0.0)
         if x.dim() == 3:
             x = x.unsqueeze(1)
         if x.dim() != 4:
@@ -31,7 +32,7 @@ class DetectionGuidanceProjector(nn.Module):
         if x.size(1) > 1:
             x = x.max(dim=1, keepdim=True).values
 
-        x = x.clamp(-20.0, 20.0).sigmoid()
+        x = x.clamp_(0.0, 1.0)
         if tuple(x.shape[-2:]) != tuple(target_hw):
             x = F.interpolate(x, size=target_hw, mode="bilinear", align_corners=False)
 

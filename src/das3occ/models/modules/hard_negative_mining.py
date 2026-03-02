@@ -16,9 +16,11 @@ def hard_negative_suppression_loss(
     if loss_weight <= 0 or det_guidance_xy is None:
         return occ_pred.new_tensor(0.0)
 
-    occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=1e4, neginf=-1e4)
+    # Keep logits in a safe range for numerics before softmax/BCE.
+    occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=10.0, neginf=-10.0)
     det_guidance_xy = torch.nan_to_num(det_guidance_xy, nan=0.0, posinf=1.0, neginf=0.0)
-    probs = occ_pred.softmax(dim=-1)
+    # Compute probabilities in fp32 for stable softmax under mixed precision.
+    probs = occ_pred.float().softmax(dim=-1)
     probs = torch.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0)
     nonempty_prob = 1.0 - probs[..., empty_class_idx]
     nonempty_prob = torch.nan_to_num(nonempty_prob, nan=0.0, posinf=1.0, neginf=0.0)
