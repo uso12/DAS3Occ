@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Iterable, Optional
 
 import torch
 
@@ -16,15 +16,32 @@ class HybridBEVFusion(BEVFusion):
         self.use_detection_guidance = use_detection_guidance
 
     @staticmethod
+    def _iter_prediction_dicts(pred) -> Iterable[dict]:
+        if pred is None:
+            return
+        if isinstance(pred, dict):
+            yield pred
+            for value in pred.values():
+                if isinstance(value, (dict, list, tuple)):
+                    yield from HybridBEVFusion._iter_prediction_dicts(value)
+            return
+        if isinstance(pred, (list, tuple)):
+            for item in pred:
+                yield from HybridBEVFusion._iter_prediction_dicts(item)
+
+    @staticmethod
     def _extract_detection_guidance(pred_dict) -> Optional[torch.Tensor]:
         if pred_dict is None:
             return None
 
         hm_list = []
-        pred_items = pred_dict if isinstance(pred_dict, (list, tuple)) else [pred_dict]
-        for item in pred_items:
-            if isinstance(item, dict) and "heatmap" in item and item["heatmap"] is not None:
-                hm_list.append(item["heatmap"].sigmoid().amax(dim=1, keepdim=True))
+        for item in HybridBEVFusion._iter_prediction_dicts(pred_dict):
+            heatmap = item.get("heatmap", None)
+            if heatmap is None or not torch.is_tensor(heatmap):
+                continue
+            if heatmap.dim() != 4:
+                continue
+            hm_list.append(heatmap.sigmoid().amax(dim=1, keepdim=True))
 
         if not hm_list:
             return None
@@ -168,6 +185,13 @@ class HybridBEVFusion(BEVFusion):
                 for name, val in occ_losses.items():
                     key = f"loss/occ/{name}" if val.requires_grad else f"stats/occ/{name}"
                     outputs[key] = val * self.loss_scale["occ"] if val.requires_grad else val
+
+            if det_guidance is not None:
+                outputs["stats/occ/det_guidance_mean"] = det_guidance.detach().mean()
+                outputs["stats/occ/det_guidance_max"] = det_guidance.detach().max()
+            else:
+                outputs["stats/occ/det_guidance_mean"] = x.detach().new_tensor(0.0)
+                outputs["stats/occ/det_guidance_max"] = x.detach().new_tensor(0.0)
 
             return outputs
 

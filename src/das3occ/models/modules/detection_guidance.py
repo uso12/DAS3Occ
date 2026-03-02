@@ -22,7 +22,7 @@ class DetectionGuidanceProjector(nn.Module):
         if guidance_logits is None:
             return None
 
-        x = guidance_logits
+        x = torch.nan_to_num(guidance_logits, nan=0.0, posinf=20.0, neginf=-20.0)
         if x.dim() == 3:
             x = x.unsqueeze(1)
         if x.dim() != 4:
@@ -31,7 +31,7 @@ class DetectionGuidanceProjector(nn.Module):
         if x.size(1) > 1:
             x = x.max(dim=1, keepdim=True).values
 
-        x = x.sigmoid()
+        x = x.clamp(-20.0, 20.0).sigmoid()
         if tuple(x.shape[-2:]) != tuple(target_hw):
             x = F.interpolate(x, size=target_hw, mode="bilinear", align_corners=False)
 
@@ -39,4 +39,5 @@ class DetectionGuidanceProjector(nn.Module):
             pad = self.blur_kernel // 2
             x = F.avg_pool2d(x, kernel_size=self.blur_kernel, stride=1, padding=pad)
 
+        x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=0.0)
         return x.clamp_(0.0, 1.0)
