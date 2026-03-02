@@ -34,7 +34,8 @@ def hard_negative_suppression_loss(
         return occ_pred.new_tensor(0.0)
 
     pred_neg = nonempty_prob[neg_mask]
-    pred_neg = torch.nan_to_num(pred_neg, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+    # Keep BCE input away from exact 0/1 to avoid extreme backward spikes.
+    pred_neg = torch.nan_to_num(pred_neg, nan=0.0, posinf=1.0, neginf=0.0).clamp(1e-4, 1.0 - 1e-4)
     if pred_neg.numel() == 0:
         return occ_pred.new_tensor(0.0)
     target = torch.zeros_like(pred_neg)

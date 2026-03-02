@@ -39,7 +39,6 @@ class FeatureMemoryBank(nn.Module):
     def _sanitize(x: torch.Tensor) -> torch.Tensor:
         return torch.nan_to_num(x, nan=0.0, posinf=1e4, neginf=-1e4)
 
-    @torch.no_grad()
     def forward(self, feats: torch.Tensor, metas: Iterable[Dict[str, Any]] = None) -> torch.Tensor:
         if metas is None:
             return feats
