@@ -8,9 +8,11 @@ def hard_negative_suppression_loss(
     occ_pred: torch.Tensor,
     det_guidance_xy: Optional[torch.Tensor],
     mask_camera: torch.Tensor,
+    voxel_semantics: torch.Tensor,
     empty_class_idx: int,
     guidance_threshold: float,
     loss_weight: float,
+    ignore_index: int = 255,
 ) -> torch.Tensor:
     """Penalize non-empty occupancy outside detector-supported regions."""
     if loss_weight <= 0 or det_guidance_xy is None:
@@ -29,7 +31,7 @@ def hard_negative_suppression_loss(
     det_mask_xy = det_guidance_xy[..., 0] >= guidance_threshold
     det_mask = det_mask_xy.unsqueeze(-1).expand_as(nonempty_prob)
 
-    valid_mask = mask_camera.to(torch.bool)
+    valid_mask = mask_camera.to(torch.bool) & (voxel_semantics != ignore_index)
     neg_mask = valid_mask & (~det_mask)
 
     if int(neg_mask.sum()) == 0:

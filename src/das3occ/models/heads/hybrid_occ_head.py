@@ -119,6 +119,7 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
                 occ_pred=occ_pred,
                 det_guidance_xy=guidance,
                 mask_camera=mask_camera,
+                voxel_semantics=voxel_semantics,
                 empty_class_idx=self.empty_class_idx,
                 guidance_threshold=self.hard_negative_threshold,
                 loss_weight=self.hard_negative_weight,
