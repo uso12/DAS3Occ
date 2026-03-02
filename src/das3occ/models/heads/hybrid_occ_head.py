@@ -47,6 +47,68 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
         self.empty_class_idx = self.num_classes - 1
         self._cached_guidance_xy: Optional[torch.Tensor] = None
 
+    def _align_guidance_to_occ_bounds(
+        self, det_guidance_logits: Optional[torch.Tensor], target_hw
+    ) -> Optional[torch.Tensor]:
+        if det_guidance_logits is None or det_guidance_logits.dim() != 4:
+            return det_guidance_logits
+
+        # Object head guidance is [B, C, X, Y], while occ features are [B, C, Y, X].
+        guidance = det_guidance_logits.permute(0, 1, 3, 2).contiguous()
+
+        # Without coordinate transform there is no physical-range remap to apply.
+        if self.coordinate_transform is None:
+            return guidance
+
+        ctf = self.coordinate_transform
+        required_attrs = ("ref_points", "lidar_x_min", "lidar_x_max", "lidar_y_min", "lidar_y_max")
+        if not all(hasattr(ctf, k) for k in required_attrs):
+            return guidance
+
+        ref_points = ctf.ref_points
+        if not torch.is_tensor(ref_points) or ref_points.numel() == 0:
+            return guidance
+
+        occ_x_min = float(ref_points[:, 0].min().item())
+        occ_x_max = float(ref_points[:, 0].max().item())
+        occ_y_min = float(ref_points[:, 1].min().item())
+        occ_y_max = float(ref_points[:, 1].max().item())
+
+        lidar_x_min = float(ctf.lidar_x_min)
+        lidar_x_max = float(ctf.lidar_x_max)
+        lidar_y_min = float(ctf.lidar_y_min)
+        lidar_y_max = float(ctf.lidar_y_max)
+
+        x_range = max(lidar_x_max - lidar_x_min, 1e-6)
+        y_range = max(lidar_y_max - lidar_y_min, 1e-6)
+
+        # Map desired occ-range endpoints into source guidance normalized coordinates.
+        x0 = 2.0 * (occ_x_min - lidar_x_min) / x_range - 1.0
+        x1 = 2.0 * (occ_x_max - lidar_x_min) / x_range - 1.0
+        y0 = 2.0 * (occ_y_min - lidar_y_min) / y_range - 1.0
+        y1 = 2.0 * (occ_y_max - lidar_y_min) / y_range - 1.0
+
+        ax = 0.5 * (x1 - x0)
+        bx = 0.5 * (x1 + x0)
+        ay = 0.5 * (y1 - y0)
+        by = 0.5 * (y1 + y0)
+
+        bsz = guidance.shape[0]
+        theta = guidance.new_tensor([[ax, 0.0, bx], [0.0, ay, by]]).unsqueeze(0).repeat(bsz, 1, 1)
+        grid = F.affine_grid(
+            theta,
+            size=[bsz, guidance.shape[1], target_hw[0], target_hw[1]],
+            align_corners=False,
+        )
+        guidance = F.grid_sample(
+            guidance,
+            grid,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        return guidance
+
     def forward(
         self,
         img_feats,
@@ -61,16 +123,13 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
             img_feats = img_feats[0]
 
         img_feats = einops.rearrange(img_feats, "bs c w h -> bs c h w")
-        img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=1e4, neginf=-1e4)
+        img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=10.0, neginf=-10.0)
 
         if self.coordinate_transform is not None:
             img_feats = self.coordinate_transform(img_feats, lidar_aug_matrix, lidar2ego, occ_aug_matrix)
-            img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=1e4, neginf=-1e4)
+            img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=10.0, neginf=-10.0)
 
-        # Object head guidance is produced on BEV [X, Y], while occ features here are [Y, X].
-        # Align axes before resizing/projecting guidance.
-        if det_guidance_logits is not None and det_guidance_logits.dim() == 4:
-            det_guidance_logits = det_guidance_logits.permute(0, 1, 3, 2).contiguous()
+        det_guidance_logits = self._align_guidance_to_occ_bounds(det_guidance_logits, img_feats.shape[-2:])
 
         guidance = self.guidance_projector(det_guidance_logits, img_feats.shape[-2:])
         if guidance is not None:
@@ -78,7 +137,7 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
             hard_gate = (guidance >= self.guidance_threshold).to(img_feats.dtype)
             soft_gate = 0.5 * guidance
             img_feats = img_feats * (1.0 + self.guidance_gain * hard_gate * guidance + soft_gate)
-            img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=1e4, neginf=-1e4)
+            img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=10.0, neginf=-10.0)
             # [B, 1, H, W] -> [B, Dx=W, Dy=H, 1]
             self._cached_guidance_xy = guidance.squeeze(1).permute(0, 2, 1).unsqueeze(-1).detach()
         else:
@@ -86,7 +145,7 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
 
         if self.use_temporal_memory:
             img_feats = self.temporal_memory(img_feats, metas=metas)
-            img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=1e4, neginf=-1e4)
+            img_feats = torch.nan_to_num(img_feats, nan=0.0, posinf=10.0, neginf=-10.0)
 
         occ_pred = self.final_conv(img_feats).permute(0, 3, 2, 1)
         bs, dx, dy = occ_pred.shape[:3]
@@ -94,11 +153,11 @@ class HybridBEVOCCHead2D(BEVOCCHead2D):
             occ_pred = self.predicter(occ_pred)
             occ_pred = occ_pred.view(bs, dx, dy, self.Dz, self.num_classes)
 
-        occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=1e4, neginf=-1e4)
+        occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=10.0, neginf=-10.0)
         return occ_pred
 
     def loss(self, occ_pred, voxel_semantics, mask_camera):
-        occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=1e4, neginf=-1e4)
+        occ_pred = torch.nan_to_num(occ_pred, nan=0.0, posinf=10.0, neginf=-10.0)
         loss_dict = super().loss(occ_pred, voxel_semantics, mask_camera)
 
         if self.hard_negative_weight > 0 and self._cached_guidance_xy is not None:
