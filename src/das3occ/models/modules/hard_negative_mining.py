@@ -27,8 +27,29 @@ def hard_negative_suppression_loss(
     nonempty_prob = 1.0 - probs[..., empty_class_idx]
     nonempty_prob = torch.nan_to_num(nonempty_prob, nan=0.0, posinf=1.0, neginf=0.0)
 
-    # det_guidance_xy: [B, Dx, Dy, 1]
-    det_mask_xy = det_guidance_xy[..., 0] >= guidance_threshold
+    # Accept both [B, Dx, Dy, 1] and [B, 1, Dx, Dy] guidance layouts.
+    if det_guidance_xy.dim() != 4:
+        return occ_pred.sum() * 0.0
+    if det_guidance_xy.shape[-1] == 1:
+        det_mask_xy = det_guidance_xy[..., 0] >= guidance_threshold
+    elif det_guidance_xy.shape[1] == 1:
+        det_mask_xy = det_guidance_xy[:, 0, ...] >= guidance_threshold
+    else:
+        return occ_pred.sum() * 0.0
+
+    if det_mask_xy.shape[1:3] != nonempty_prob.shape[1:3]:
+        if det_mask_xy.shape[1] == nonempty_prob.shape[2] and det_mask_xy.shape[2] == nonempty_prob.shape[1]:
+            det_mask_xy = det_mask_xy.transpose(1, 2)
+        else:
+            det_mask_xy = (
+                F.interpolate(
+                    det_mask_xy.unsqueeze(1).float(),
+                    size=nonempty_prob.shape[1:3],
+                    mode="nearest",
+                )
+                .squeeze(1)
+                .to(torch.bool)
+            )
     det_mask = det_mask_xy.unsqueeze(-1).expand_as(nonempty_prob)
 
     valid_mask = mask_camera.to(torch.bool) & (voxel_semantics != ignore_index)
@@ -43,5 +64,6 @@ def hard_negative_suppression_loss(
     pred_neg = torch.nan_to_num(pred_neg, nan=0.0, posinf=1.0, neginf=0.0).clamp(1e-4, 1.0 - 1e-4)
     if pred_neg.numel() == 0:
         return occ_pred.sum() * 0.0
-    target = torch.zeros_like(pred_neg)
+    pred_neg = pred_neg.float()
+    target = torch.zeros_like(pred_neg, dtype=torch.float32)
     return F.binary_cross_entropy(pred_neg, target) * loss_weight
